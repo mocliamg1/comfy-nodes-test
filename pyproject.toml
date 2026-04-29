@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batch-label"
+version = "0.1.0"
+description = "Batch label images with a multimodal model served by llama-server."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "httpx>=0.27,<1",
+  "Pillow>=10,<12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.5,<1",
+]
+
+[project.scripts]
+batch-label = "batch_label.cli:run"
+
+[tool.setuptools.packages.find]
+include = ["batch_label*"]
+
+[tool.setuptools.package-data]
+batch_label = ["prompt_presets/*.txt"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
