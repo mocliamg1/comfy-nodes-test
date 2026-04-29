@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from typing import Any
-
-import httpx
+from urllib import error, request
 
 from batch_label.client import LlamaServerClient, LlamaServerError, resolve_model_id
 from batch_label.config import DEFAULT_BASE_URL, DEFAULT_TIMEOUT
@@ -15,17 +15,26 @@ COMFYUI_FREE_URL = "http://127.0.0.1:8188/free"
 
 
 def unload_comfyui_models(timeout: float) -> None:
+    payload = json.dumps({"unload_models": True, "free_memory": False}).encode("utf-8")
+    request_object = request.Request(
+        COMFYUI_FREE_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
     try:
-        response = httpx.post(
-            COMFYUI_FREE_URL,
-            json={"unload_models": True, "free_memory": False},
-            timeout=httpx.Timeout(timeout=timeout, connect=5.0),
-        )
-    except httpx.HTTPError as exc:
+        with request.urlopen(request_object, timeout=timeout) as response:
+            status_code = response.status
+            response_body = response.read().decode("utf-8", errors="replace").strip()
+    except error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"ComfyUI /free returned HTTP {exc.code}: {response_body}") from exc
+    except OSError as exc:
         raise RuntimeError(f"Failed to call ComfyUI /free: {exc}") from exc
 
-    if response.status_code >= 400:
-        raise RuntimeError(f"ComfyUI /free returned HTTP {response.status_code}: {response.text.strip()}")
+    if status_code >= 400:
+        raise RuntimeError(f"ComfyUI /free returned HTTP {status_code}: {response_body}")
 
 
 def _iter_batch_images(image: Any) -> list[Any]:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json as json_module
 from typing import Any
-
-import httpx
+from urllib import error, request
 
 from batch_label.types import LabelResponse, PreparedImage, ServerModelInfo
 
@@ -64,17 +64,12 @@ class LlamaServerClient:
         self,
         base_url: str,
         timeout: float,
-        http_client: httpx.Client | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(
-            timeout=httpx.Timeout(timeout=timeout, connect=5.0)
-        )
+        self.timeout = timeout
 
     def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
+        return None
 
     def __enter__(self) -> "LlamaServerClient":
         return self
@@ -128,38 +123,50 @@ class LlamaServerClient:
         json: dict[str, Any] | None = None,
         include_status: bool = False,
     ) -> Any:
+        body: bytes | None = None
+        headers: dict[str, str] = {}
+        if json is not None:
+            body = json_module.dumps(json).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        request_object = request.Request(
+            f"{self.base_url}{path}",
+            data=body,
+            headers=headers,
+            method=method,
+        )
+
         try:
-            response = self._client.request(method, f"{self.base_url}{path}", json=json)
-        except httpx.HTTPError as exc:
+            with request.urlopen(request_object, timeout=self.timeout) as response:
+                status_code = response.status
+                response_body = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", errors="replace").strip()
+            detail = f" {response_body}" if response_body else ""
+            raise LlamaServerError(f"Server returned HTTP {exc.code} for {path}.{detail}") from exc
+        except OSError as exc:
             raise LlamaServerError(f"Request to {path} failed: {exc}") from exc
 
-        if response.status_code >= 400:
-            body = response.text.strip()
-            detail = f" {body}" if body else ""
-            raise LlamaServerError(
-                f"Server returned HTTP {response.status_code} for {path}.{detail}"
-            )
-
         try:
-            payload = response.json()
+            payload = json_module.loads(response_body)
         except ValueError as exc:
             raise LlamaServerError(f"Server returned invalid JSON for {path}.") from exc
 
         if include_status:
-            return payload, response.status_code
+            return payload, status_code
         return payload
 
     def maybe_unload_model(self, model: str) -> bool:
         try:
-            response = self._client.request(
+            self._request_json(
                 "POST",
-                f"{self.base_url}/models/unload",
+                "/models/unload",
                 json={"model": model},
             )
-        except httpx.HTTPError:
+        except LlamaServerError:
             return False
 
-        return response.status_code < 400
+        return True
 
 
 def resolve_model_id(client: LlamaServerClient, requested_model: str | None) -> str:
